@@ -1,6 +1,6 @@
 ---
 - name: Create disable transparent hugepages systemd service file
-  template:
+  ansible.builtin.template:
     src: "{{ item }}"
     dest: /etc/systemd/system/disable-transparent-hugepages.service
     owner: root

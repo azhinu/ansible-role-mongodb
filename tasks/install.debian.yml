@@ -1,22 +1,23 @@
 ---
 - name: Establish some role-related facts
-  set_fact:
+  ansible.builtin.set_fact:
     mongodb_major_version: "{{ mongodb_version[0:3] | string }}"
 
 - name: Disable transparent huge pages on systemd systems
-  include_tasks: disable_transparent_hugepages.yml
+  ansible.builtin.include_tasks: disable_transparent_hugepages.yml
   when:
     - mongodb_disable_transparent_hugepages | bool
     - ansible_service_mgr == "systemd"
 
 - name: Add APT key
-  get_url:
+  ansible.builtin.get_url:
     url: "https://www.mongodb.org/static/pgp/server-{{ mongodb_major_version }}.asc"
     dest: "/usr/share/keyrings/mongodb-server-{{ mongodb_major_version }}.asc"
+    mode: 644
   when: mongodb_package == 'mongodb-org'
 
 - name: Add APT repository
-  apt_repository:
+  ansible.builtin.apt_repository:
     repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/debian {{ ansible_distribution_release }}/mongodb-org/{{ version_item }} main"
     update_cache: true
   with_items: "{{ mongodb_major_version }}"
@@ -25,32 +26,32 @@
   when: mongodb_package == 'mongodb-org'
 
 - name: Install MongoDB package
-  apt:
+  ansible.builtin.apt:
     name: "{{ mongodb_package }}{% if (mongodb_version | length > 3) %}={{ mongodb_version }}{% endif %}"
     state: "{{ mongodb_package_state }}"
     update_cache: true
 
 - name: Check if NUMA is available on host
-  command: "ls -1 /proc/1/numa_maps"
+  ansible.builtin.command: "ls -1 /proc/1/numa_maps"
   register: numa_available
   ignore_errors: true
   changed_when: false
-  check_mode: no
+  check_mode: false
   when: mongodb_use_numa | bool
 
 - name: Don't use NUMA if it is unavailable on host
-  set_fact:
+  ansible.builtin.set_fact:
     mongodb_use_numa: false
   when: (mongodb_use_numa | bool and numa_available.rc != 0)
 
 - name: Install numactl package
-  apt:
+  ansible.builtin.apt:
     name: numactl
     state: present
   when: mongodb_use_numa | bool
 
 - name: Add systemd configuration if present
-  template:
+  ansible.builtin.template:
     src: mongodb.service.j2
     dest: "/lib/systemd/system/{{ mongodb_daemon_name }}.service"
     owner: root
@@ -63,7 +64,7 @@
     - reload systemd
 
 - name: Add symlink for systemd
-  file:
+  ansible.builtin.file:
     src: "/lib/systemd/system/{{ mongodb_daemon_name }}.service"
     dest: "/etc/systemd/system/multi-user.target.wants/{{ mongodb_daemon_name }}.service"
     state: link
@@ -74,23 +75,23 @@
     - reload systemd
 
 - name: Install PyMongo package
-  apt:
+  ansible.builtin.apt:
     name: "{{ mongodb_pymongo_package }}"
   when: not mongodb_pymongo_from_pip
 
 - name: Install PIP
-  apt:
+  ansible.builtin.apt:
     pkg: "{{ mongodb_pymongo_deps }}"
   when: mongodb_pymongo_from_pip | bool
 
   # TODO: check if it is still needed for Debian/Ubuntu
 - name: Install setuptools (required for ansible 2.7+)
-  apt:
+  ansible.builtin.apt:
     pkg: "{{ mongodb_python_setuptools }}"
   when: mongodb_pymongo_from_pip | bool
 
 - name: Install PyMongo from PIP
-  pip:
+  ansible.builtin.pip:
     name:
       - pymongo
     state: "{{ mongodb_pymongo_pip_version is defined | ternary('present', 'latest') }}"

@@ -1,16 +1,16 @@
 ---
 
 - name: Establish some role-related facts
-  set_fact:
+  ansible.builtin.set_fact:
     mongodb_major_version: "{{ mongodb_version[0:3] | string  }}"
 
 - name: Install EPEL release repository
-  package:
+  ansible.builtin.package:
     name: epel-release
     state: present
 
 - name: Add YUM repository
-  template:
+  ansible.builtin.template:
     src: mongodb.repo.j2
     dest: /etc/yum.repos.d/mongodb.repo
     mode: 0644
@@ -20,33 +20,33 @@
   when: mongodb_package == 'mongodb-org'
 
 - name: Install MongoDB package
-  yum:
+  ansible.builtin.yum:
     name: "{{ mongodb_package }}{% if (mongodb_version | length > 3) %}-{{ mongodb_version }}{% endif %}"
     state: "{{ mongodb_package_state }}"
     lock_timeout: "{{ yum_lock_timeout }}"
 
 - name: Install numactl package
-  yum:
+  ansible.builtin.yum:
     name: numactl
     state: present
     lock_timeout: "{{ yum_lock_timeout }}"
   when: mongodb_use_numa | bool
 
 - name: Install PyMongo package
-  yum:
+  ansible.builtin.yum:
     name: "{{ mongodb_pymongo_package }}"
     state: present
     lock_timeout: "{{ yum_lock_timeout }}"
   when: not mongodb_pymongo_from_pip
 
 - name: Install PIP
-  yum:
+  ansible.builtin.yum:
     name: "{{ mongodb_pymongo_deps }}"
     lock_timeout: "{{ yum_lock_timeout }}"
   when: mongodb_pymongo_from_pip | bool
 
 - name: Install PyMongo from PIP
-  pip:
+  ansible.builtin.pip:
     name: pymongo
     state: "{{ mongodb_pymongo_pip_version is defined | ternary('present', 'latest') }}"
     version: "{{ mongodb_pymongo_pip_version | default(omit) }}"
