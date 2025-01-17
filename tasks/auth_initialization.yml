@@ -16,18 +16,11 @@
 - name: Create administrative user "{{ mongodb_root_admin_name }}"
   community.mongodb.mongodb_user:
     database: admin
-    name: "{{ item.name }}"
-    password: "{{ item.password }}"
+    name: "{{ mongodb_root_admin_name }}"
+    password: "{{ mongodb_root_admin_password}}"
+    roles: root
     update_password: "{{ mongodb_user_update_password }}"
-    roles: "{{ item.roles }}"
     login_host: "{{ mongodb_net_bindip.split(',') | map('replace', '0.0.0.0', '127.0.0.1') | list  | first }}"
-    login_port: "{{ mongodb_net_port | int }}"
-  with_items:
-    - {
-      name: "{{ mongodb_root_admin_name }}",
-      password: "{{ mongodb_root_admin_password }}",
-      roles: "root"
-      }
   no_log: true
 
 - name: Move back mongod.conf

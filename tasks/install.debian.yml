@@ -33,7 +33,7 @@
         repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
     - name: Add Mondo APT repo
       ansible.builtin.apt_repository:
-        repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/ubuntu  focal/mongodb-org/{{ version_item }} main"
+        repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/ubuntu  focal/mongodb-org/{{ version_item }} multiverse"
         update_cache: true
       with_items: "{{ mongodb_major_version }}"
       loop_control:
