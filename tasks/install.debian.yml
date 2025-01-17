@@ -23,7 +23,31 @@
   with_items: "{{ mongodb_major_version }}"
   loop_control:
     loop_var: version_item
-  when: mongodb_package == 'mongodb-org'
+  when: mongodb_package == 'mongodb-org' and mongodb_version_supported
+
+- name: Install unsupported mongo to Ubuntu 22+
+  when: mongodb_version_supported == false and ansible_distribution == 'Ubuntu'
+  block:
+    - name: Add Focal security repo
+      ansible.builtin.apt_repository:
+        repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
+    - name: Add Mondo APT repo
+      ansible.builtin.apt_repository:
+        repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/ubuntu  focal/mongodb-org/{{ version_item }} main"
+        update_cache: true
+      with_items: "{{ mongodb_major_version }}"
+      loop_control:
+        loop_var: version_item
+
+    - name: Install libssl
+      ansible.builtin.apt:
+        name: libssl1.1
+        state: present
+
+    - name: Remove focal security repo
+      ansible.builtin.apt_repository:
+        repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
+        state: absent
 
 - name: Install MongoDB package
   ansible.builtin.apt:
