@@ -1,0 +1,10 @@
+---
+profile: production
+skip_list:
+  # Keep the existing role path and the mongodb_* public inventory interface.
+  - role-name
+  - var-naming[no-role-prefix]
+exclude_paths:
+  - tests/
+extra_vars:
+  selected_hosts: mongo

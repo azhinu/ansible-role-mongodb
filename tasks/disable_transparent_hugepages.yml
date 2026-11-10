@@ -5,11 +5,11 @@
     dest: /etc/systemd/system/disable-transparent-hugepages.service
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
   with_first_found:
-    - "disable-transparent-hugepages.{{ ansible_distribution | lower }}.service.j2"
-    - "disable-transparent-hugepages.{{ ansible_os_family | lower }}.service.j2"
-  notify: "run disable-transparent-hugepages"
+    - "disable-transparent-hugepages.{{ ansible_facts['distribution'] | lower }}.service.j2"
+    - "disable-transparent-hugepages.{{ ansible_facts['os_family'] | lower }}.service.j2"
+  notify: "MongoDB disable transparent hugepages"
   when:
-    - ansible_service_mgr == "systemd"
+    - ansible_facts['service_mgr'] == "systemd"
     - mongodb_disable_transparent_hugepages | bool

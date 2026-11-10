@@ -1,0 +1,77 @@
+---
+- name: Create exporter service group
+  ansible.builtin.group:
+    name: mongodb_exporter
+    system: true
+
+- name: Create exporter service user
+  ansible.builtin.user:
+    name: mongodb_exporter
+    group: mongodb_exporter
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create exporter release directory
+  ansible.builtin.file:
+    path: "/opt/mongodb_exporter/{{ mongodb_exporter_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download exporter archive
+  ansible.builtin.get_url:
+    url: "{{ mongodb_exporter_download_url }}"
+    dest: "/opt/mongodb_exporter/mongodb_exporter-{{ mongodb_exporter_version }}.tar.gz"
+    checksum: "{{ mongodb_exporter_checksum | default(omit, true) }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Extract exporter release
+  ansible.builtin.unarchive:
+    src: "/opt/mongodb_exporter/mongodb_exporter-{{ mongodb_exporter_version }}.tar.gz"
+    dest: "/opt/mongodb_exporter/{{ mongodb_exporter_version }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "/opt/mongodb_exporter/{{ mongodb_exporter_version }}/mongodb_exporter"
+    owner: root
+    group: root
+
+- name: Select exporter release
+  ansible.builtin.file:
+    src: "/opt/mongodb_exporter/{{ mongodb_exporter_version }}/mongodb_exporter"
+    dest: /usr/local/bin/mongodb_exporter
+    state: link
+    force: true
+  notify: MongoDB restart exporter
+
+- name: Configure exporter credentials
+  ansible.builtin.template:
+    src: mongodb_exporter.env.j2
+    dest: /etc/mongodb_exporter.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: MongoDB restart exporter
+
+- name: Install exporter systemd unit
+  ansible.builtin.template:
+    src: mongodb_exporter.service.j2
+    dest: /etc/systemd/system/mongodb_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: MongoDB restart exporter
+
+- name: Apply exporter configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start exporter
+  ansible.builtin.systemd_service:
+    name: mongodb_exporter.service
+    daemon_reload: true
+    enabled: true
+    state: started

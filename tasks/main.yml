@@ -1,133 +1,89 @@
 ---
-
-- name: Check value of variable mongodb_net_ssl_host
-  ansible.builtin.fail:
-    msg: 'Set mongodb_net_ssl_mode is preferSSL or set valid hostname for mongodb_net_ssl_host!'
-  when: ( mongodb_net_ssl_mode == 'requireSSL'
-          and mongodb_net_ssl_host|length == 0 )
-
-- name: Check value of variable mongodb_login_host
-  ansible.builtin.fail:
-    msg: 'Set mongodb_login_host equal mongodb_net_ssl_host!'
-  when: ( mongodb_net_ssl_mode == 'requireSSL'
-          and mongodb_net_ssl_host != mongodb_login_host
-          and not mongodb_replication_replset )
-
-- name: Include OS-specific variables
-  ansible.builtin.include_vars: "{{ item }}"
-  with_first_found:
-    - "{{ ansible_distribution_release }}.yml"
-    - "{{ ansible_distribution }}.yml"
-    - "{{ ansible_os_family }}.yml"
-
-- name: Include installation tasks
-  ansible.builtin.include_tasks: "{{ item }}"
-  with_first_found:
-    - "install.{{ ansible_distribution | lower }}.yml"
-    - "install.{{ ansible_os_family | lower }}.yml"
+- name: Validate MongoDB settings
+  ansible.builtin.import_tasks: validate.yml
   tags: [mongodb]
 
-- name: Include configuration.yml
-  ansible.builtin.include_tasks: configure.yml
+- name: Load platform variables
+  ansible.builtin.include_vars: "{{ lookup('ansible.builtin.first_found', mongodb__platform_vars) }}"
+  vars:
+    mongodb__platform_vars:
+      files:
+        - "{{ ansible_facts['distribution'] }}.yml"
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths: ["{{ role_path }}/vars"]
   tags: [mongodb]
 
-- name: Include replication and auth configuration
-  ansible.builtin.include_tasks: replication_init_auth.yml
-  when: ( mongodb_replication_replset | length > 0
-        and mongodb_security_authorization == 'enabled'
-        and mongodb_master is defined and mongodb_master )
+- name: Determine MongoDB release series
+  ansible.builtin.set_fact:
+    mongodb_major_version: "{{ mongodb_version.split('.')[:2] | join('.') }}"
   tags: [mongodb]
 
-- name: Include replication configuration
-  ansible.builtin.include_tasks: replication.yml
-  when: mongodb_replication_replset | length > 0
+- name: Install MongoDB
+  ansible.builtin.include_tasks: "{{ lookup('ansible.builtin.first_found', mongodb__install_tasks) }}"
+  vars:
+    mongodb__install_tasks:
+      files:
+        - "install.{{ ansible_facts['distribution'] | lower }}.yml"
+        - "install.{{ ansible_facts['os_family'] | lower }}.yml"
+      paths: ["{{ role_path }}/tasks"]
   tags: [mongodb]
 
-- name: Check whether admin user is already exist
-  ansible.builtin.command: >
-    mongo --quiet {{ '--ssl --host ' + mongodb_net_ssl_host if mongodb_net_ssl_mode == 'requireSSL' else '' }} -u {{ mongodb_root_admin_name }} \
-          -p {{ mongodb_root_admin_password }} --port {{ mongodb_net_port }} --eval 'db.version()' admin
-  register: mongodb_user_admin_check
-  changed_when: false
-  check_mode: false
-  ignore_errors: true
-  when: ( mongodb_security_authorization == 'enabled'
-          and not mongodb_replication_replset )
-  no_log: true
+- name: Configure MongoDB
+  ansible.builtin.import_tasks: configure.yml
   tags: [mongodb]
 
-- name: Include authorization configuration
-  ansible.builtin.include_tasks: auth_initialization.yml
-  when: ( mongodb_security_authorization == 'enabled'
-          and not mongodb_replication_replset
-          and mongodb_user_admin_check.rc != 0 )
-  tags: [mongodb]
-
-# - name: Create normal users with replicaset
-#   community.mongodb.mongodb_user:
-#     database: "{{ item.database }}"
-#     name: "{{ item.name }}"
-#     password: "{{ item.password }}"
-#     update_password: "{{ mongodb_user_update_password }}"
-#     roles: "{{ item.roles }}"
-#     login_user: "{{ mongodb_root_admin_name }}"
-#     login_password: "{{ mongodb_root_admin_password }}"
-#     login_port: "{{ mongodb_login_port | default(27017) }}"
-#     login_host: "{{ mongodb_login_host | default('localhost') }}"
-#     ssl: "{{ True if mongodb_net_ssl_mode == 'requireSSL' else False }}"
-#   with_items:
-#     - "{{ mongodb_users | default([]) }}"
-#   when: ( mongodb_replication_replset
-#         and mongodb_security_authorization == 'enabled'
-#         and mongodb_master is defined and mongodb_master )
-#   no_log: true
-#   tags: [mongodb]
-
-# - name: Create normal users without replicaset
-#   community.mongodb.mongodb_user:
-#     database: "{{ item.database }}"
-#     name: "{{ item.name }}"
-#     password: "{{ item.password }}"
-#     update_password: "{{ mongodb_user_update_password }}"
-#     roles: "{{ item.roles }}"
-#     login_user: "{{ mongodb_root_admin_name }}"
-#     login_password: "{{ mongodb_root_admin_password }}"
-#   with_items:
-#     - "{{ mongodb_users | default([]) }}"
-#   when: ( mongodb_security_authorization == 'enabled'
-#           and not mongodb_replication_replset )
-#   no_log: false
-#   tags: [mongodb, users]
-
-# - name: Create oplog user with replicaset
-#   community.mongodb.mongodb_user:
-#     database: admin
-#     user: "{{ item.user }}"
-#     password: "{{ item.password }}"
-#     update_password: "{{ mongodb_user_update_password }}"
-#     roles:
-#       - db: local
-#         role: read
-#     login_user: "{{ mongodb_root_admin_name }}"
-#     login_password: "{{ mongodb_root_admin_password }}"
-#     login_port: "{{ mongodb_login_port | default(27017) }}"
-#     login_host: "{{ mongodb_login_host | default('localhost') }}"
-#     ssl: "{{ True if mongodb_net_ssl_mode == 'requireSSL' else False }}"
-#   with_items:
-#     - "{{ mongodb_oplog_users | default([]) }}"
-#   when: ( mongodb_replication_replset | length > 0
-#         and mongodb_security_authorization == 'enabled'
-#         and mongodb_master is defined and mongodb_master )
-#   no_log: true
-#   tags: [mongodb]
-
-- name: Service started
+- name: Start and enable MongoDB
   ansible.builtin.service:
     name: "{{ mongodb_daemon_name }}"
     state: started
     enabled: true
+  when: mongodb_manage_service | bool
+  tags: [mongodb]
 
-- name: Include MMS Agent configuration
+- name: Wait for MongoDB connections
+  ansible.builtin.wait_for:
+    host: "{{ mongodb_login_host }}"
+    port: "{{ mongodb_login_port }}"
+    timeout: 120
+  when: mongodb_manage_service | bool and not ansible_check_mode
+  tags: [mongodb]
+
+- name: Build replica set membership
+  ansible.builtin.include_tasks: replication_members.yml
+  when:
+    - mongodb_replication_replset | length > 0
+    - mongodb_master | bool
+  tags: [mongodb]
+
+- name: Manage authentication and replication
+  tags: [mongodb, mongodb_users]
+  block:
+    - name: Initialize authentication
+      ansible.builtin.include_tasks: auth_initialization.yml
+      when:
+        - mongodb_security_authorization == 'enabled'
+        - not mongodb_replication_replset or mongodb_master | bool
+        - not ansible_check_mode
+
+    - name: Configure replica set
+      ansible.builtin.include_tasks: replication.yml
+      when:
+        - mongodb_replication_replset | length > 0
+        - mongodb_master | bool
+        - not ansible_check_mode
+
+    - name: Manage requested users
+      ansible.builtin.include_tasks: users.yml
+      when:
+        - not mongodb_replication_replset or mongodb_master | bool
+        - not ansible_check_mode
+
+- name: Install MongoDB exporter
+  ansible.builtin.include_tasks: exporter.yml
+  when: mongodb_exporter_install | bool
+  tags: [mongodb, mongodb_exporter]
+
+- name: Configure MMS agent
   ansible.builtin.include_tasks: mms-agent.yml
   when: mongodb_mms_api_key | length > 0
   tags: [mongodb]

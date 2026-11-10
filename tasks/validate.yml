@@ -1,0 +1,52 @@
+---
+- name: Validate supported platform and options
+  ansible.builtin.assert:
+    that:
+      - ansible_version.full is version('2.21', '>=')
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - mongodb_version is string
+      - mongodb_security_authorization in ['enabled', 'disabled']
+      - mongodb_user_update_password in ['always', 'on_create']
+      - mongodb_net_port | int > 0
+      - mongodb_net_port | int < 65536
+      - mongodb_net_ssl_mode != 'requireSSL' or mongodb_net_ssl_host | length > 0
+      - not mongodb_processmanagement_fork or ansible_facts['service_mgr'] != 'systemd'
+    fail_msg: MongoDB settings are invalid; systemd requires a foreground mongod process.
+
+- name: Validate administrative credentials
+  ansible.builtin.assert:
+    that:
+      - mongodb_root_admin_name | length > 0
+      - mongodb_root_admin_password | length > 0
+  when: mongodb_security_authorization == 'enabled'
+  no_log: true
+
+- name: Validate exporter credentials
+  ansible.builtin.assert:
+    that:
+      - mongodb_exporter_name | length > 0
+      - mongodb_exporter_password | length > 0
+      - "'\n' not in mongodb_exporter_password"
+      - "'\r' not in mongodb_exporter_password"
+      - ansible_facts['service_mgr'] == 'systemd'
+  when: mongodb_exporter_install | bool
+  no_log: true
+
+- name: Validate authenticated replica set key
+  ansible.builtin.assert:
+    that:
+      - mongodb_keyfile_content | trim | length >= 6
+      - mongodb_keyfile_content | trim | length <= 1024
+  when:
+    - mongodb_replication_replset | length > 0
+    - mongodb_security_authorization == 'enabled'
+  no_log: true
+
+- name: Validate replica set membership
+  ansible.builtin.assert:
+    that:
+      - mongodb_replication_params | length > 0
+    fail_msg: Set the complete mongodb_replication_params list on the replica set master.
+  when:
+    - mongodb_replication_replset | length > 0
+    - mongodb_master | bool

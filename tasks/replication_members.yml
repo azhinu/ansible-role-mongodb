@@ -1,0 +1,19 @@
+---
+- name: Reset internal replica set membership
+  ansible.builtin.set_fact:
+    mongodb__replica_members: []
+
+- name: Translate replica set members for the collection module
+  ansible.builtin.set_fact:
+    mongodb__replica_members: "{{ mongodb__replica_members + [mongodb__member] }}"
+  vars:
+    mongodb__member:
+      host: "{{ item.host_name ~ ':' ~ (item.host_port | default(mongodb_net_port) | string) }}"
+      priority: "{{ item.priority | default(0 if item.host_type | default('replica') == 'arbiter' or item.hidden | default(false) else 1) }}"
+      hidden: "{{ item.hidden | default(false) }}"
+      arbiterOnly: "{{ item.host_type | default('replica') == 'arbiter' }}"
+      votes: "{{ item.votes | default(1) }}"
+      buildIndexes: "{{ item.build_indexes | default(item.buildIndexes | default(true)) }}"
+  loop: "{{ mongodb_replication_params }}"
+  loop_control:
+    label: "{{ item.host_name }}"

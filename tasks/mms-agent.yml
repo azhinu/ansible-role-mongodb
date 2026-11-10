@@ -2,13 +2,13 @@
 - name: Install MMS agent (Debian)
   ansible.builtin.apt:
     deb: "{{ mongodb_mms_agent_pkg }}"
-  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+  when: ansible_facts['distribution'] == 'Debian' or ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Install MMS agent (RHEL)
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name: "{{ mongodb_mms_agent_pkg }}"
     state: present
-  when: ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'
+  when: ansible_facts['distribution'] == 'CentOS' or ansible_facts['distribution'] == 'RedHat'
 
 - name: Configure the MMS agent pt. 1
   ansible.builtin.file:
@@ -16,7 +16,7 @@
     path: /etc/mongodb-mms
     owner: "{{ mongodb_user }}"
     group: "{{ mongodb_user }}"
-    mode: 0755
+    mode: "0755"
 
 - name: Configure the MMS agent pt. 2
   ansible.builtin.template:
@@ -24,8 +24,8 @@
     dest: /etc/mongodb-mms/monitoring-agent.config
     owner: "{{ mongodb_user }}"
     group: "{{ mongodb_user }}"
-    mode: 0644
-  notify: mongodb-mms-monitoring-agent restart
+    mode: "0644"
+  notify: MongoDB restart MMS agent
 
 - name: Ensure that the MMS agent is started
   ansible.builtin.service:

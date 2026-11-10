@@ -1,0 +1,16 @@
+---
+- name: Add disposable secondaries to the test inventory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Register replica set secondaries
+      ansible.builtin.add_host:
+        name: "mongodb-molecule-cluster-{{ item }}"
+        groups: mongo
+        ansible_connection: community.docker.docker
+        ansible_host: "mongodb-molecule-cluster-{{ item }}"
+        ansible_python_interpreter: /usr/bin/python3
+        mongodb_master: false
+        mongodb_exporter_install: false
+      loop: [2, 3]
+      changed_when: false

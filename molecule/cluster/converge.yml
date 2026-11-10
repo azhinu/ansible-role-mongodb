@@ -1,0 +1,8 @@
+---
+- name: Load test topology
+  ansible.builtin.import_playbook: topology.yml
+
+- name: Converge replica set using test inventory
+  ansible.builtin.import_playbook: ../../../../deploy-mongodb.yml
+  vars:
+    selected_hosts: mongo

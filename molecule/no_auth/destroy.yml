@@ -1,0 +1,10 @@
+---
+- name: Destroy disposable MongoDB target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Remove only the Molecule bootstrap container
+      community.docker.docker_container:
+        name: mongodb-molecule-no-auth
+        state: absent
+        force_kill: true

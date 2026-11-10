@@ -1,0 +1,38 @@
+---
+- name: Manage requested MongoDB users
+  community.mongodb.mongodb_user:
+    database: "{{ item.database }}"
+    name: "{{ item.name }}"
+    password: "{{ item.password | default(omit) }}"
+    roles: "{{ item.roles | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    update_password: "{{ item.update_password | default(mongodb_user_update_password) }}"
+    login_user: "{{ mongodb_root_admin_name if mongodb_security_authorization == 'enabled' else omit }}"
+    login_password: "{{ mongodb_root_admin_password if mongodb_security_authorization == 'enabled' else omit }}"
+    login_host: "{{ mongodb_login_host }}"
+    login_port: "{{ mongodb_login_port }}"
+    ssl: "{{ mongodb_net_ssl_mode == 'requireSSL' }}"
+    strict_compatibility: "{{ mongodb_strict_compatibility }}"
+  loop: "{{ mongodb_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Manage oplog readers
+  community.mongodb.mongodb_user:
+    database: admin
+    name: "{{ item.user }}"
+    password: "{{ item.password }}"
+    roles:
+      - db: local
+        role: read
+    update_password: "{{ mongodb_user_update_password }}"
+    login_user: "{{ mongodb_root_admin_name if mongodb_security_authorization == 'enabled' else omit }}"
+    login_password: "{{ mongodb_root_admin_password if mongodb_security_authorization == 'enabled' else omit }}"
+    login_host: "{{ mongodb_login_host }}"
+    login_port: "{{ mongodb_login_port }}"
+    ssl: "{{ mongodb_net_ssl_mode == 'requireSSL' }}"
+    strict_compatibility: "{{ mongodb_strict_compatibility }}"
+  loop: "{{ mongodb_oplog_users }}"
+  no_log: true
+  when: mongodb_replication_replset | length > 0

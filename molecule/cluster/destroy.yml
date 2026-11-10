@@ -1,0 +1,11 @@
+---
+- name: Destroy disposable MongoDB target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Remove only the Molecule replica set containers
+      community.docker.docker_container:
+        name: "mongodb-molecule-cluster-{{ item }}"
+        state: absent
+        force_kill: true
+      loop: [1, 2, 3]

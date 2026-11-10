@@ -1,6 +1,10 @@
 ---
 
-mongodb_version_supported: true
+# Legacy Ubuntu compatibility is explicit and remains overridable by inventory.
+mongodb_version_supported: >-
+  {{ not (ansible_facts['distribution'] == 'Ubuntu'
+          and ansible_facts['distribution_major_version'] | int >= 22
+          and mongodb_version is version('5.0', '<')) }}
 mongodb_package: mongodb-org
 mongodb_package_state: present
 mongodb_version: "4.4"
@@ -17,8 +21,6 @@ mongodb_apt_key_url:
   "4.2": "https://www.mongodb.org/static/pgp/server-4.2.asc"
   "4.4": "https://www.mongodb.org/static/pgp/server-4.4.asc"
 
-mongodb_pymongo_from_pip: true                   # Install latest PyMongo via PIP or package manager
-mongodb_pymongo_pip_version: 3.11.3
 
 mongodb_user_update_password: "on_create"        # MongoDB user password update default policy
 mongodb_manage_service: true
@@ -26,11 +28,11 @@ mongodb_manage_systemd_unit: true
 mongodb_systemd_unit_limit_nofile: 64000
 mongodb_systemd_unit_limit_nproc: 64000
 
-mongodb_disable_transparent_hugepages: false
+mongodb_disable_transparent_hugepages: true
 
 mongodb_use_numa: true
 
-mongodb_user: "{{ 'mongod' if ('RedHat' == ansible_os_family) else 'mongodb' }}"
+mongodb_user: "{{ 'mongod' if ('RedHat' == ansible_facts['os_family']) else 'mongodb' }}"
 mongodb_uid:
 mongodb_gid:
 mongodb_daemon_name: "{{ 'mongod' if ('mongodb-org' in mongodb_package) else 'mongodb' }}"
@@ -48,8 +50,8 @@ mongodb_net_ssl_host: ""                         # Valid ssl hostname
 
 ## processManagement Options
 # Fork server process
-# Enabled by default for RedHat as the init scripts assume forking is enabled.
-mongodb_processmanagement_fork: "{{ 'RedHat' == ansible_os_family }}"
+# Keep mongod in the foreground for the systemd Type=simple unit.
+mongodb_processmanagement_fork: false
 
 ## security Options
 # Disable or enable security. Possible values: 'disabled', 'enabled'
@@ -99,38 +101,44 @@ mongodb_mms_group_id: ""
 mongodb_mms_api_key: ""
 mongodb_mms_base_url: https://mms.mongodb.com
 
-# password for inter-process authentication
-# please regenerate this file on production environment with command 'openssl rand -base64 741'
-mongodb_keyfile_content: |
-  8pYcxvCqoe89kcp33KuTtKVf5MoHGEFjTnudrq5BosvWRoIxLowmdjrmUpVfAivh
-  CHjqM6w0zVBytAxH1lW+7teMYe6eDn2S/O/1YlRRiW57bWU3zjliW3VdguJar5i9
-  Z+1a8lI+0S9pWynbv9+Ao0aXFjSJYVxAm/w7DJbVRGcPhsPmExiSBDw8szfQ8PAU
-  2hwRl7nqPZZMMR+uQThg/zV9rOzHJmkqZtsO4UJSilG9euLCYrzW2hdoPuCrEDhu
-  Vsi5+nwAgYR9dP2oWkmGN1dwRe0ixSIM2UzFgpaXZaMOG6VztmFrlVXh8oFDRGM0
-  cGrFHcnGF7oUGfWnI2Cekngk64dHA2qD7WxXPbQ/svn9EfTY5aPw5lXzKA87Ds8p
-  KHVFUYvmA6wVsxb/riGLwc+XZlb6M9gqHn1XSpsnYRjF6UzfRcRR2WyCxLZELaqu
-  iKxLKB5FYqMBH7Sqg3qBCtE53vZ7T1nefq5RFzmykviYP63Uhu/A2EQatrMnaFPl
-  TTG5CaPjob45CBSyMrheYRWKqxdWN93BTgiTW7p0U6RB0/OCUbsVX6IG3I9N8Uqt
-  l8Kc+7aOmtUqFkwo8w30prIOjStMrokxNsuK9KTUiPu2cj7gwYQ574vV3hQvQPAr
-  hhb9ohKr0zoPQt31iTj0FDkJzPepeuzqeq8F51HB56RZKpXdRTfY8G6OaOT68cV5
-  vP1O6T/okFKrl41FQ3CyYN5eRHyRTK99zTytrjoP2EbtIZ18z+bg/angRHYNzbgk
-  lc3jpiGzs1ZWHD0nxOmHCMhU4usEcFbV6FlOxzlwrsEhHkeiununlCsNHatiDgzp
-  ZWLnP/mXKV992/Jhu0Z577DHlh+3JIYx0PceB9yzACJ8MNARHF7QpBkhtuGMGZpF
-  T+c73exupZFxItXs1Bnhe3djgE3MKKyYvxNUIbcTJoe7nhVMrwO/7lBSpVLvC4p3
-  wR700U0LDaGGQpslGtiE56SemgoP
+# Supply a shared secret from Vault for an authenticated replica set.
+mongodb_keyfile_content: ""
 
 # names and passwords for administrative users
 mongodb_user_admin_name: siteUserAdmin
-mongodb_user_admin_password: passw0rd
+mongodb_user_admin_password: ""
 
 mongodb_root_admin_name: siteRootAdmin
-mongodb_root_admin_password: passw0rd
+mongodb_root_admin_password: ""
 
 mongodb_root_backup_name: backupuser
-mongodb_root_backup_password: passw0rd
+mongodb_root_backup_password: ""
 
 # setParameter config
-mongodb_set_parameters:
+mongodb_set_parameters: {}
 
 # custom config options
-mongodb_config:
+mongodb_config: {}
+
+# PyMongo 3.x from the OS uses the collection's legacy API path.
+mongodb_strict_compatibility: false
+mongodb_login_host: "{{ mongodb_net_ssl_host if mongodb_net_ssl_mode == 'requireSSL' else '127.0.0.1' }}"
+mongodb_login_port: "{{ mongodb_net_port }}"
+mongodb_users: []
+mongodb_oplog_users: []
+mongodb_master: false
+mongodb_replication_params: []
+mongodb_exporter_install: false
+mongodb_exporter_version: "0.43.1"
+mongodb_exporter_name: exporter
+mongodb_exporter_password: ""
+mongodb_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+mongodb_exporter_download_url: >-
+  {{ 'https://github.com/percona/mongodb_exporter/releases/download/v' ~ mongodb_exporter_version
+     ~ '/mongodb_exporter-' ~ mongodb_exporter_version ~ '.linux-' ~ mongodb_exporter_arch ~ '.tar.gz' }}
+mongodb_exporter_checksum: ""
+mongodb_exporter_web_listen_address: ":9216"
+mongodb_exporter_uri: "mongodb://{{ mongodb_login_host }}:{{ mongodb_login_port }}/?authSource=admin"
+mongodb_exporter_collectors:
+  - --collector.diagnosticdata
+  - --collector.dbstats

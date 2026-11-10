@@ -1,38 +1,48 @@
 ---
-- name: Use different mongod.conf for auth initialization
-  ansible.builtin.template:
-    src: mongod_init.conf.j2
-    dest: /etc/mongod.conf
-    owner: root
-    group: root
-    mode: 0644
-  notify:
-    - mongodb restart
-    - wait when mongodb is started on localhost
+- name: Ensure the administrative account exists
+  block:
+    - name: Manage MongoDB administrator using existing credentials
+      community.mongodb.mongodb_user:
+        database: admin
+        name: "{{ mongodb_root_admin_name }}"
+        password: "{{ mongodb_root_admin_password }}"
+        roles: [root]
+        update_password: "{{ mongodb_user_update_password }}"
+        login_user: "{{ mongodb_root_admin_name }}"
+        login_password: "{{ mongodb_root_admin_password }}"
+        login_host: "{{ mongodb_login_host }}"
+        login_port: "{{ mongodb_login_port }}"
+        ssl: "{{ mongodb_net_ssl_mode == 'requireSSL' }}"
+        strict_compatibility: "{{ mongodb_strict_compatibility }}"
+      no_log: true
+  rescue:
+    - name: Bootstrap replica set before creating the first administrator
+      community.mongodb.mongodb_replicaset:
+        replica_set: "{{ mongodb_replication_replset }}"
+        validate: false
+        members: "{{ mongodb__replica_members }}"
+        login_host: "{{ mongodb_login_host }}"
+        login_port: "{{ mongodb_login_port }}"
+        ssl: "{{ mongodb_net_ssl_mode == 'requireSSL' }}"
+        strict_compatibility: "{{ mongodb_strict_compatibility }}"
+      when: mongodb_replication_replset | length > 0
+      no_log: true
 
-- name: Flush all handlers at this point
-  ansible.builtin.meta: flush_handlers
-
-- name: Create administrative user "{{ mongodb_root_admin_name }}"
-  community.mongodb.mongodb_user:
-    database: admin
-    name: "{{ mongodb_root_admin_name }}"
-    password: "{{ mongodb_root_admin_password}}"
-    roles: root
-    update_password: "{{ mongodb_user_update_password }}"
-    login_host: "{{ mongodb_net_bindip.split(',') | map('replace', '0.0.0.0', '127.0.0.1') | list  | first }}"
-  no_log: true
-
-- name: Move back mongod.conf
-  ansible.builtin.template:
-    src: mongod.conf.j2
-    dest: /etc/mongod.conf
-    owner: root
-    group: root
-    mode: 0644
-  notify:
-    - mongodb restart
-    - wait when mongodb is started
-
-- name: Flush all handlers at this point
-  ansible.builtin.meta: flush_handlers
+    # MongoDB's localhost exception permits only the first administrator.
+    # Wrong credentials on an initialized database fail here without disabling auth.
+    - name: Create the first administrator using the localhost exception
+      community.mongodb.mongodb_user:
+        database: admin
+        name: "{{ mongodb_root_admin_name }}"
+        password: "{{ mongodb_root_admin_password }}"
+        roles: [root]
+        update_password: always
+        login_host: "{{ mongodb_login_host }}"
+        login_port: "{{ mongodb_login_port }}"
+        ssl: "{{ mongodb_net_ssl_mode == 'requireSSL' }}"
+        strict_compatibility: "{{ mongodb_strict_compatibility }}"
+      no_log: true
+      register: mongodb__bootstrap_admin
+      retries: 12
+      delay: 5
+      until: mongodb__bootstrap_admin is succeeded

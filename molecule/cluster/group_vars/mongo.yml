@@ -1,0 +1,3 @@
+---
+mongodb_replication_replset: molecule_rs
+mongodb_keyfile_content: MoleculeOnlyReplicaSetKey1234567890

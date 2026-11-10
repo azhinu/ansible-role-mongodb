@@ -1,240 +1,378 @@
 # Ansible role for MongoDB
-![Centos](https://github.com/UnderGreen/ansible-role-mongodb/actions/workflows/centos.yml/badge.svg) ![Debian](https://github.com/UnderGreen/ansible-role-mongodb/actions/workflows/debian.yml/badge.svg) ![Ubuntu](https://github.com/UnderGreen/ansible-role-mongodb/actions/workflows/ubuntu.yml/badge.svg) ![Amazon Linux 2](https://github.com/UnderGreen/ansible-role-mongodb/actions/workflows/amazonlinux2.yml/badge.svg)
 
-Ansible role to install and manage [MongoDB](http://www.mongodb.org/).
+Ansible role to install and manage [MongoDB](https://www.mongodb.org/).
 
-- Install and configure the MongoDB
-- Configure mongodb users
-- Configure authentication
-- Configure replication
-- Setup MMS automation agent;
+- Install and configure MongoDB.
+- Create the initial administrator and manage database users.
+- Configure authentication and replica sets.
+- Install and configure Percona MongoDB Exporter.
+- Optionally install the MMS monitoring agent.
 
-MongoDB support matrix:
+The role requires **Ansible core 2.21 or later** and the `community.mongodb`
+collection. PyMongo is installed exclusively through the operating system's
+`python3-pymongo` package. Use a system Python interpreter that can import this
+package; the role does not install PyMongo through pip or create a virtualenv.
 
-| Distribution   | < MongoDB 3.4 |    MongoDB 3.6     |    MongoDB 4.0     |   MongoDB 4.2      |   MongoDB 4.4      |
-| -------------- | :-----------: | :----------------: | :----------------: | :----------------: | :----------------: |
-| Ubuntu 16.04   |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: |        :x:         |
-| Ubuntu 18.04   |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: |        :x:         |
-| Ubuntu 20.04   |  :no_entry:   |        :x:         |        :x:         |        :x:         | :white_check_mark: |
-| Debian 9.x     |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| Debian 10.x    |  :no_entry:   |        :x:         |        :x:         | :white_check_mark: | :white_check_mark: |
-| RHEL 7.x       |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| RHEL 8.x       |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| Amazon Linux 2 |  :no_entry:   | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+MongoDB test matrix:
 
-- :white_check_mark: - fully tested
-- :x: - don't have official support
-- :no_entry: - MongoDB has reached EOL
+| Distribution | MongoDB | System PyMongo | Verification |
+| ------------ | ------- | -------------- | ------------ |
+| Ubuntu 24.04, amd64 | 4.4.31 | 3.11.0 | Docker: standalone, bootstrap, three-node replica set, authorization disabled |
+| Debian | Not tested in the current matrix | OS package | Debian-family installation tasks available |
+| RHEL-family / Amazon Linux | Not tested in the current matrix | OS package | RPM installation tasks available; require DNF and matching packages |
+
+The table describes the current role tests, rather than upstream MongoDB platform
+support. Other distribution/version combinations require separate validation.
+On Ubuntu 22 or later, the default compatibility calculation selects the Focal
+MongoDB repository for MongoDB versions below 5.0. The role installs `libssl1.1`
+from Focal security when needed and removes that temporary repository in an
+`always` block. The configured MongoDB version is not implicitly changed to a
+newer major release.
 
 #### Variables
 
+The following settings cover the role's main interface. See
+[defaults/main.yml](defaults/main.yml) for the full defaults and
+[meta/argument_specs.yml](meta/argument_specs.yml) for input validation.
+Values in inventory take precedence over role defaults.
+
 ```yaml
-# This variable is used to set source of MongoDB installation.
-# 'mongodb' - version provided by Debian-based distributions from their official package repositories.
-# 'mongodb-org' - version provided by MongoDB package repository.
-# 'mongodb' is not included in th role test matrix and working of it is not guarantied.
+# Installation source and version.
+# mongodb-org uses the official MongoDB repository.
+# Alternative package names are not covered by the current test matrix.
 mongodb_package: mongodb-org
+mongodb_package_state: present
+mongodb_version: "4.4" # Release series, or an exact package version such as "4.4.31".
 
-# `mongodb_version` variable sets version of MongoDB.
-# Should be '3.6', '4.0', '4.2' or '4.4'. This role doesn't support MongoDB < 3.6.
-# I would recommend you to use the latest version of MongoDB.
-mongodb_version: "4.4"
+# Normally calculated from the distribution and MongoDB version.
+# Set false to select the legacy Ubuntu/Focal compatibility path explicitly.
+# mongodb_version_supported: false
 
-mongodb_pymongo_from_pip: true # Install latest PyMongo via PIP or package manager
-mongodb_pymongo_pip_version: 3.6.1 # Choose PyMong version to install from pip. If not set use latest
-mongodb_user_update_password: "on_create" # MongoDB user password update default policy
+# Use the collection's legacy API path for the system PyMongo 3.x package.
+mongodb_strict_compatibility: false
+mongodb_user_update_password: "on_create" # Choices: on_create, always.
+mongodb_users: []
+mongodb_oplog_users: []
+
+# Service management.
 mongodb_manage_service: true
 mongodb_manage_systemd_unit: true
-
-# Disable transparent hugepages on systemd debian based installations
+mongodb_systemd_unit_limit_nofile: 64000
+mongodb_systemd_unit_limit_nproc: 64000
 mongodb_disable_transparent_hugepages: false
-
-# You can enable or disable NUMA support
 mongodb_use_numa: true
 
-mongodb_user: "{{ 'mongod' if ('RedHat' == ansible_os_family) else 'mongodb' }}"
-mongodb_uid:
-mongodb_gid:
-mongodb_daemon_name: "{{ 'mongod' if ('mongodb-org' in mongodb_package) else 'mongodb' }}"
-## net Options
-mongodb_net_bindip: 127.0.0.1 # Comma separated list of ip addresses to listen on
-mongodb_net_http_enabled: false # Enable http interface
-mongodb_net_ipv6: false # Enable IPv6 support (disabled by default)
-mongodb_net_maxconns: 65536 # Max number of simultaneous connections
-mongodb_net_port: 27017 # Specify port number
+mongodb_user: "{{ 'mongod' if ansible_facts['os_family'] == 'RedHat' else 'mongodb' }}"
+mongodb_uid: null # Optional service account UID.
+mongodb_gid: null # Optional service account GID.
+mongodb_daemon_name: "{{ 'mongod' if 'mongodb-org' in mongodb_package else 'mongodb' }}"
 
-## processManagement Options
-mongodb_processmanagement_fork: false # Fork server process
+## net options
+mongodb_net_bindip: "127.0.0.1" # Comma-separated listen addresses.
+mongodb_net_ipv6: false
+mongodb_net_maxconns: 65536
+mongodb_net_port: 27017
+mongodb_net_ssl: disabled
+mongodb_net_ssl_mode: ""
+mongodb_net_ssl_pemfile: ""
+mongodb_net_ssl_host: ""
 
-## security Options
-# Disable or enable security. Possible values: 'disabled', 'enabled'
-mongodb_security_authorization: "disabled"
-mongodb_security_keyfile: /etc/mongodb-keyfile # Specify path to keyfile with password for inter-process authentication
+# Connection settings used by database management tasks on the managed host.
+# requireSSL selects mongodb_net_ssl_host instead of 127.0.0.1 by default.
+mongodb_login_host: "{{ mongodb_net_ssl_host if mongodb_net_ssl_mode == 'requireSSL' else '127.0.0.1' }}"
+mongodb_login_port: "{{ mongodb_net_port }}"
 
-## storage Options
-mongodb_storage_dbpath: /data/db # Directory for datafiles
-mongodb_storage_dirperdb: false # Use one directory per DB
+## processManagement options
+# The managed systemd Type=simple unit requires a foreground process.
+mongodb_processmanagement_fork: false
 
-# The storage engine for the mongod database
-mongodb_storage_engine: "wiredTiger"
-# mmapv1 specific options
-mongodb_storage_quota_enforced: false # Limits each database to a certain number of files
-mongodb_storage_quota_maxfiles: 8 # Number of quota files per DB
-mongodb_storage_smallfiles: false # Very useful for non-data nodes
+## security options
+mongodb_security_authorization: "disabled" # Choices: disabled, enabled.
+mongodb_security_javascript_enabled: true
+mongodb_security_keyfile: /etc/mongodb-keyfile
+mongodb_keyfile_content: "" # Required shared secret for an authenticated replica set.
+mongodb_root_admin_name: siteRootAdmin
+mongodb_root_admin_password: "" # Required when authorization is enabled.
 
-mongodb_storage_journal_enabled: true # Enable journaling
-mongodb_storage_prealloc: true # Disable data file preallocation
+## storage options
+mongodb_storage_dbpath: /data/db
+mongodb_storage_dirperdb: false
+mongodb_storage_engine: wiredTiger
+mongodb_storage_journal_enabled: true # Rendered for MongoDB versions up to 6.0.
+mongodb_wiredtiger_directory_for_indexes: false
+# Optional WiredTiger cache size in GB; omitted by default.
+# mongodb_wiredtiger_cache_size: 1
 
-# WiredTiger Options
-mongodb_wiredtiger_cache_size: 1 # Cache size for wiredTiger in GB
+## systemLog options
+mongodb_systemlog_destination: file # Choices: file, syslog.
+mongodb_systemlog_logappend: true
+mongodb_systemlog_logrotate: rename # MongoDB's own log rotation behavior.
+mongodb_systemlog_path: "/var/log/mongodb/{{ mongodb_daemon_name }}.log"
 
-## systemLog Options
-## The destination to which MongoDB sends all log output. Specify either 'file' or 'syslog'.
-## If you specify 'file', you must also specify mongodb_systemlog_path.
-mongodb_systemlog_destination: "file"
-mongodb_systemlog_logappend: true # Append to logpath instead of over-writing
-mongodb_systemlog_path: /var/log/mongodb/{{ mongodb_daemon_name }}.log # Log file to send write to instead of stdout
+## operationProfiling options
+mongodb_operation_profiling_slow_op_threshold_ms: 100
+mongodb_operation_profiling_mode: "off"
 
-## replication Options
-mongodb_replication_replset: # Enable replication <setname>[/<optionalseedhostlist>]
-mongodb_replication_replindexprefetch: "all" # specify index prefetching behavior (if secondary) [none|_id_only|all]
-mongodb_replication_oplogsize: 1024 # specifies a maximum size in megabytes for the replication operation log
+## replication options
+mongodb_replication_replset: "" # Nonempty replica set name enables replication.
+mongodb_replication_oplogsize: 1024 # Oplog size in MB.
+mongodb_master: false # Enable on the node that manages the replica set.
+mongodb_replication_params: [] # Complete member list, configured on that node.
 
 ## setParameter options
-# Configure setParameter option.
-# Example :
-mongodb_set_parameters:
-  {
-    "enableLocalhostAuthBypass": "true",
-    "authenticationMechanisms": "SCRAM-SHA-1,MONGODB-CR",
-  }
+mongodb_set_parameters: {}
 
-## Extend config with arbitrary values
-# Example :
-mongodb_config:
-  replication:
-    - "enableMajorityReadConcern: false"
+## Extend individual configuration sections with YAML lines.
+mongodb_config: {}
 
-# MMS Agent
-mongodb_mms_agent_pkg: https://cloud.mongodb.com/download/agent/monitoring/mongodb-mms-monitoring-agent_7.2.0.488-1_amd64.ubuntu1604.deb
+## MongoDB Exporter
+mongodb_exporter_install: false
+mongodb_exporter_version: "0.43.1"
+mongodb_exporter_name: exporter
+mongodb_exporter_password: ""
+mongodb_exporter_web_listen_address: ":9216"
+mongodb_exporter_uri: "mongodb://{{ mongodb_login_host }}:{{ mongodb_login_port }}/?authSource=admin"
+mongodb_exporter_collectors:
+  - --collector.diagnosticdata
+  - --collector.dbstats
+# Architecture is derived from ansible_facts: x86_64 -> amd64, aarch64 -> arm64.
+# mongodb_exporter_arch: amd64
+# The download URL is derived from the version and architecture by default.
+# mongodb_exporter_download_url: https://example.org/mongodb_exporter.tar.gz
+mongodb_exporter_checksum: "" # Optional checksum accepted by get_url, e.g. sha256:<digest>.
+
+## MMS monitoring agent
+# Set mongodb_mms_agent_pkg to the appropriate package URL for your platform.
 mongodb_mms_group_id: ""
-mongodb_mms_api_key: ""
+mongodb_mms_api_key: "" # A nonempty value enables installation.
 mongodb_mms_base_url: https://mms.mongodb.com
+```
 
-# Log rotation
-mongodb_logrotate: true # Rotate mongodb logs.
-mongodb_logrotate_options:
-  - compress
-  - copytruncate
-  - daily
-  - dateext
-  - rotate 7
-  - size 10M
+The role creates the data and log directories and manages their ownership without
+recursively changing ownership of existing database files. When moving existing
+data, ensure that the files already belong to `mongodb_user`.
 
-# password for inter-process authentication
-# please regenerate this file on production environment with command 'openssl rand -base64 741'
-mongodb_keyfile_content: |
-  8pYcxvCqoe89kcp33KuTtKVf5MoHGEFjTnudrq5BosvWRoIxLowmdjrmUpVfAivh
-  CHjqM6w0zVBytAxH1lW+7teMYe6eDn2S/O/1YlRRiW57bWU3zjliW3VdguJar5i9
-  Z+1a8lI+0S9pWynbv9+Ao0aXFjSJYVxAm/w7DJbVRGcPhsPmExiSBDw8szfQ8PAU
-  2hwRl7nqPZZMMR+uQThg/zV9rOzHJmkqZtsO4UJSilG9euLCYrzW2hdoPuCrEDhu
-  Vsi5+nwAgYR9dP2oWkmGN1dwRe0ixSIM2UzFgpaXZaMOG6VztmFrlVXh8oFDRGM0
-  cGrFHcnGF7oUGfWnI2Cekngk64dHA2qD7WxXPbQ/svn9EfTY5aPw5lXzKA87Ds8p
-  KHVFUYvmA6wVsxb/riGLwc+XZlb6M9gqHn1XSpsnYRjF6UzfRcRR2WyCxLZELaqu
-  iKxLKB5FYqMBH7Sqg3qBCtE53vZ7T1nefq5RFzmykviYP63Uhu/A2EQatrMnaFPl
-  TTG5CaPjob45CBSyMrheYRWKqxdWN93BTgiTW7p0U6RB0/OCUbsVX6IG3I9N8Uqt
-  l8Kc+7aOmtUqFkwo8w30prIOjStMrokxNsuK9KTUiPu2cj7gwYQ574vV3hQvQPAr
-  hhb9ohKr0zoPQt31iTj0FDkJzPepeuzqeq8F51HB56RZKpXdRTfY8G6OaOT68cV5
-  vP1O6T/okFKrl41FQ3CyYN5eRHyRTK99zTytrjoP2EbtIZ18z+bg/angRHYNzbgk
-  lc3jpiGzs1ZWHD0nxOmHCMhU4usEcFbV6FlOxzlwrsEhHkeiununlCsNHatiDgzp
-  ZWLnP/mXKV992/Jhu0Z577DHlh+3JIYx0PceB9yzACJ8MNARHF7QpBkhtuGMGZpF
-  T+c73exupZFxItXs1Bnhe3djgE3MKKyYvxNUIbcTJoe7nhVMrwO/7lBSpVLvC4p3
-  wR700U0LDaGGQpslGtiE56SemgoP
+`mongodb_config` appends YAML lines to the supported configuration sections:
+`net`, `processManagement`, `replication`, `security`, `storage`, `systemLog`, and
+`operationProfiling`. For example:
 
-# names and passwords for administrative users
-mongodb_user_admin_name: siteUserAdmin
-mongodb_user_admin_password: passw0rd
+```yaml
+mongodb_set_parameters:
+  ttlMonitorSleepSecs: 30
 
-mongodb_root_admin_name: siteRootAdmin
-mongodb_root_admin_password: passw0rd
-
-mongodb_root_backup_name: backupuser
-mongodb_root_backup_password: passw0rd
+mongodb_config:
+  net:
+    - "compression: {compressors: snappy}"
 ```
 
 #### Usage
 
-Add `undergreen.mongodb` to your roles and set vars in your playbook file.
+Add `ansible-role-mongodb` to your playbook and define the desired settings in
+inventory:
+
+```yaml
+---
+- name: Deploy MongoDB
+  hosts: mongo
+  become: true
+  roles:
+    - ansible-role-mongodb
+```
+
+The repository's deployment playbook accepts a host pattern through
+`selected_hosts`. Run it from the repository root:
+
+```sh
+ansible-playbook -i inventory/dev_test_inv.yml deploy-mongodb.yml \
+  -e selected_hosts=mongo --vault-password-file /path/to/vault-password
+```
 
 Example vars for authorization:
 
 ```yaml
-mongodb_security_authorization: "enabled"
+mongodb_security_authorization: enabled
+mongodb_root_admin_name: root
+mongodb_root_admin_password: "{{ vault_mongodb_root_admin_password }}"
 mongodb_users:
-  - {
-    name: testUser,
-    password: passw0rd,
-    roles: readWrite,
+  - name: app_user
     database: app_development
-}
+    password: "{{ vault_mongodb_app_password }}"
+    roles:
+      - role: readWrite
+        db: app_development
+    update_password: on_create
 ```
 
-Example vars for oplog user:
+The first administrator is created through MongoDB's localhost exception without
+turning authorization off. Initial creation requires a local connection from the
+managed host. On an initialized database, the supplied administrator credentials
+must already be valid; the role does not reset an existing administrator's
+password after a failed login. To rotate that password, change it using valid
+existing credentials and then update the inventory secret.
+
+Database users accept `name`, `database`, `password`, `roles`, and the optional
+`state` and `update_password` fields. `on_create` preserves an existing password;
+`always` applies the supplied password on each run. Per-user settings override
+`mongodb_user_update_password`. To remove a user:
+
+```yaml
+mongodb_users:
+  - name: obsolete_user
+    database: app_development
+    state: absent
+```
+
+Example vars for an oplog reader, created in `admin` when replication is enabled:
 
 ```yaml
 mongodb_oplog_users:
-  - {
-    user: oplog,
-    password: passw0rd
-}
+  - user: oplog_reader
+    password: "{{ vault_mongodb_oplog_password }}"
 ```
 
-Required vars to change on production:
+Required secrets for an authenticated deployment:
 
 ```yaml
-mongodb_user_admin_password
-mongodb_root_admin_password
-mongodb_root_backup_password
+mongodb_root_admin_password: "{{ vault_mongodb_root_admin_password }}"
 
-# if you use replication and authorization
-mongodb_security_keyfile
+# All members of an authenticated replica set must use the same key.
+mongodb_keyfile_content: "{{ vault_mongodb_keyfile }}"
+
+# Required when the exporter is enabled.
+mongodb_exporter_password: "{{ vault_mongodb_exporter_password }}"
 ```
 
-Example vars for replication:
+Store these values and database user passwords in Ansible Vault. The role manages
+the root administrator, explicitly requested `mongodb_users`, and oplog readers;
+it does not automatically create separate user-administrator or backup accounts.
+
+Example vars for replication, shared by all replica set nodes:
 
 ```yaml
-# It's a 'master' node
-mongodb_login_host: 192.168.56.2
+mongodb_replication_replset: rs0
+mongodb_net_bindip: "0.0.0.0"
+mongodb_security_authorization: enabled
+mongodb_root_admin_password: "{{ vault_mongodb_root_admin_password }}"
+mongodb_keyfile_content: "{{ vault_mongodb_keyfile }}"
+```
 
-# mongodb_replication_params should be configured on each replica set node
+Configure the complete membership list on the node with `mongodb_master: true`:
+
+```yaml
+mongodb_master: true
 mongodb_replication_params:
-  - {
-      host_name: 192.168.56.2,
-      host_port: "{{ mongodb_net_port }}",
-      host_type: replica,
-    }
-  # host_type can be replica(default) and arbiter
+  - host_name: mongo1.example.internal
+    host_port: 27017
+    priority: 2
+  - host_name: mongo2.example.internal
+    host_port: 27017
+  - host_name: mongo3.example.internal
+    host_port: 27017
 ```
 
-And inventory file for replica set:
+Each member accepts `host_name`, `host_port`, `host_type` (`replica` or `arbiter`),
+`priority`, `votes`, `hidden`, and `build_indexes`. Port defaults to
+`mongodb_net_port`. Arbiters and hidden members default to priority zero; other
+members default to priority one.
+
+And an example inventory file for the replica set:
 
 ```ini
 [mongo_master]
-192.158.56.2 mongodb_master=True # it is't a really master of MongoDB replica set,
-                                 # use this variable for replica set init only
-								 # or when master is moved from initial master node
+mongo1.example.internal mongodb_master=true
 
 [mongo_replicas]
-192.168.56.3
-192.168.56.4
+mongo2.example.internal
+mongo3.example.internal
 
 [mongo:children]
 mongo_master
 mongo_replicas
+
+[mongo:vars]
+ansible_python_interpreter=/usr/bin/python3
 ```
+
+`mongodb_master` selects the node on which the role manages membership and users;
+it does not permanently assign the MongoDB PRIMARY. Run the role against all
+members so that their services are configured before initialization. Member names
+must resolve between nodes. Apply membership changes one member at a time per
+run, following the collection module's reconfiguration constraints. Management
+connections must reach the current writable primary when changing an existing
+replica set or its users.
+
+Example vars for MongoDB Exporter:
+
+```yaml
+mongodb_exporter_install: true
+mongodb_exporter_name: exporter
+mongodb_exporter_password: "{{ vault_mongodb_exporter_password }}"
+mongodb_users:
+  - name: "{{ mongodb_exporter_name }}"
+    database: admin
+    password: "{{ mongodb_exporter_password }}"
+    roles:
+      - role: clusterMonitor
+        db: admin
+      - role: read
+        db: local
+```
+
+Define the exporter's database account in `mongodb_users`, including any
+additional permissions required by your enabled collectors. The exporter runs as
+a dedicated system user. Credentials are stored in `/etc/mongodb_exporter.env`
+with root ownership and mode `0600`. Releases are extracted into versioned
+subdirectories of `/opt/mongodb_exporter`; `/usr/local/bin/mongodb_exporter`
+selects the active binary through a symlink. Changed credentials, binaries, or
+service configuration notify the exporter restart handler.
+
+#### Testing
+
+Molecule tests run against Docker containers using the repository's
+`inventory/dev_test_inv.yml` and `deploy-mongodb.yml`. Install the controller
+dependencies from [requirements.txt](requirements.txt) and the collections from
+[molecule/requirements.yml](molecule/requirements.yml). The controller needs access
+to Docker and the inventory's Vault password. Tests disable fact injection into
+`ansible_*` variables.
+
+Inside the project's Docker controller:
+
+```sh
+cd /workspace/roles/ansible-role-mongodb
+export ANSIBLE_VAULT_PASSWORD_FILE=/run/vault-pass
+molecule test -s default
+molecule test -s bootstrap
+molecule test -s cluster
+molecule test -s no_auth
+ANSIBLE_ROLES_PATH=/workspace/roles ansible-lint -c .ansible-lint .
+```
+
+- `default`: apply the deployment playbook to the existing `dev-test-mongo`
+  container, check idempotence, and verify its inventory configuration. This
+  scenario leaves the container running.
+- `bootstrap`: install into a disposable container with a clean database,
+  different ports and paths, and an exporter password containing special
+  characters. Check restarts, password policies, role updates, and user removal.
+- `cluster`: initialize an authenticated three-node replica set with a shared
+  keyfile and check its primary, membership, and member health.
+- `no_auth`: check authorization-disabled operation, a custom port, connection
+  limits, WiredTiger cache size, and `setParameter` values.
+
+Every scenario verifies idempotence and uses the system `python3-pymongo`
+package. Verification checks the driver's system installation path and the
+absence of a virtualenv, live server settings, authentication, user roles, CRUD,
+service state, and permissions. Exporter-enabled scenarios also scrape
+`mongodb_up` and diagnostic collector metrics. CRUD checks use and remove the
+`ansible_molecule_smoke` database.
+
+Disposable scenarios use the `chargers-ansible-test:ubuntu24` image and
+`chargers-dev-test_downloads` Docker network by default. Override them through
+`MONGODB_MOLECULE_IMAGE` and `MONGODB_MOLECULE_NETWORK`. These scenarios remove
+their temporary containers at the end. See
+[molecule/TEST_RESULTS.md](molecule/TEST_RESULTS.md) for recorded results.
 
 Licensed under the GPLv2 License. See the [LICENSE.md](LICENSE.md) file for details.
 
 #### Feedback, bug-reports, requests, ...
 
-Are [welcome](https://github.com/UnderGreen/ansible-role-mongodb/issues)!
+Issues and requests are [welcome](https://github.com/azhinu/ansible-role-mongodb/issues)!

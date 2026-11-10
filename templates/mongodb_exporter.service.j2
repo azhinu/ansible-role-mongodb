@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=MongoDB Exporter
+After=network-online.target {{ mongodb_daemon_name }}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mongodb_exporter
+Group=mongodb_exporter
+EnvironmentFile=/etc/mongodb_exporter.env
+ExecStart=/usr/local/bin/mongodb_exporter --mongodb.uri={{ mongodb_exporter_uri }} --web.listen-address={{ mongodb_exporter_web_listen_address }} {{ mongodb_exporter_collectors | join(' ') }}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+---
+ansible_host: mongodb-molecule-no-auth
+mongodb_net_port: 27029
+mongodb_security_authorization: disabled
+mongodb_exporter_install: false
+mongodb_net_maxconns: 2048
+mongodb_wiredtiger_cache_size: 0.25
+mongodb_set_parameters:
+  ttlMonitorSleepSecs: 30

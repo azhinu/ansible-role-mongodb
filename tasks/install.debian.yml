@@ -1,125 +1,111 @@
 ---
-- name: Establish some role-related facts
-  ansible.builtin.set_fact:
-    mongodb_major_version: "{{ mongodb_version[0:3] | string }}"
+- name: Install repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, python3-debian, python3-pymongo]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
-- name: Disable transparent huge pages on systemd systems
+- name: Disable transparent huge pages
   ansible.builtin.include_tasks: disable_transparent_hugepages.yml
-  when:
-    - mongodb_disable_transparent_hugepages | bool
-    - ansible_service_mgr == "systemd"
+  when: mongodb_disable_transparent_hugepages | bool
 
-- name: Add APT key
+- name: Install MongoDB signing key
   ansible.builtin.get_url:
-    url: "https://www.mongodb.org/static/pgp/server-{{ mongodb_major_version }}.asc"
+    url: "https://pgp.mongodb.com/server-{{ mongodb_major_version }}.asc"
     dest: "/usr/share/keyrings/mongodb-server-{{ mongodb_major_version }}.asc"
-    mode: 644
+    mode: "0644"
   when: mongodb_package == 'mongodb-org'
 
-- name: Add APT repository
-  ansible.builtin.apt_repository:
-    repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/{{ ansible_distribution | lower }}  {{ ansible_distribution_release }}/mongodb-org/{{ version_item }} main"
-    update_cache: true
-  with_items: "{{ mongodb_major_version }}"
-  loop_control:
-    loop_var: version_item
-  when: mongodb_package == 'mongodb-org' and mongodb_version_supported
+- name: Remove legacy MongoDB repository files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/repo_mongodb_org_apt_ubuntu.list
+    - /etc/apt/sources.list.d/repo_mongodb_org_apt_debian.list
+    - /etc/apt/sources.list.d/mongodb-org.list
+  when: mongodb_package == 'mongodb-org'
 
-- name: Install unsupported mongo to Ubuntu 22+
-  when: mongodb_version_supported == false and ansible_distribution == 'Ubuntu'
+- name: Configure MongoDB APT repository
+  ansible.builtin.deb822_repository:
+    name: mongodb-org
+    types: [deb]
+    uris: "https://repo.mongodb.org/apt/{{ ansible_facts['distribution'] | lower }}"
+    suites:
+      - "{{ 'focal' if not mongodb_version_supported | bool else ansible_facts['distribution_release'] }}/mongodb-org/{{ mongodb_major_version }}"
+    components: "{{ ['multiverse'] if ansible_facts['distribution'] == 'Ubuntu' else ['main'] }}"
+    signed_by: "/usr/share/keyrings/mongodb-server-{{ mongodb_major_version }}.asc"
+    mode: "0644"
+  when: mongodb_package == 'mongodb-org'
+  notify: MongoDB refresh APT cache
+
+- name: Apply repository changes before installing MongoDB
+  ansible.builtin.meta: flush_handlers
+
+- name: Install legacy OpenSSL for MongoDB 4.4 on newer Ubuntu
+  when:
+    - not mongodb_version_supported | bool
+    - ansible_facts['distribution'] == 'Ubuntu'
   block:
-    - name: Add Focal security repo
-      ansible.builtin.apt_repository:
-        repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
-    - name: Add Mondo APT repo
-      ansible.builtin.apt_repository:
-        repo: "deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ version_item }}.asc] http://repo.mongodb.org/apt/ubuntu  focal/mongodb-org/{{ version_item }} multiverse"
-        update_cache: true
-      with_items: "{{ mongodb_major_version }}"
-      loop_control:
-        loop_var: version_item
+    - name: Inspect legacy OpenSSL installation
+      ansible.builtin.package_facts:
+        manager: auto
 
-    - name: Install libssl
-      ansible.builtin.apt:
-        name: libssl1.1
-        state: present
+    - name: Install compatibility dependency from Focal security
+      when: "'libssl1.1' not in ansible_facts['packages']"
+      block:
+        - name: Temporarily enable Focal security for libssl1.1
+          ansible.builtin.deb822_repository:
+            name: mongodb-libssl-compat
+            types: [deb]
+            uris: http://security.ubuntu.com/ubuntu
+            suites: [focal-security]
+            components: [main]
+            signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+            mode: "0644"
+          changed_when: false
 
-    - name: Remove focal security repo
-      ansible.builtin.apt_repository:
-        repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
-        state: absent
+        - name: Install libssl1.1
+          ansible.builtin.apt:
+            name: libssl1.1
+            state: present
+            update_cache: true
+      always:
+        - name: Remove temporary Focal security repository
+          ansible.builtin.deb822_repository:
+            name: mongodb-libssl-compat
+            state: absent
+          changed_when: false
 
-- name: Install MongoDB package
+- name: Install MongoDB packages
   ansible.builtin.apt:
-    name: "{{ mongodb_package }}{% if (mongodb_version | length > 3) %}={{ mongodb_version }}{% endif %}"
+    name: >-
+      {{ [mongodb_package] if mongodb_version.split('.') | length == 2 else
+         [mongodb_package + '=' + mongodb_version,
+          'mongodb-org-server=' + mongodb_version,
+          'mongodb-org-shell=' + mongodb_version,
+          'mongodb-org-mongos=' + mongodb_version,
+          'mongodb-org-tools=' + mongodb_version] }}
     state: "{{ mongodb_package_state }}"
-    update_cache: true
+    policy_rc_d: 101
 
-- name: Check if NUMA is available on host
-  ansible.builtin.command: "ls -1 /proc/1/numa_maps"
-  register: numa_available
-  ignore_errors: true
-  changed_when: false
-  check_mode: false
-  when: mongodb_use_numa | bool
-
-- name: Don't use NUMA if it is unavailable on host
-  ansible.builtin.set_fact:
-    mongodb_use_numa: false
-  when: (mongodb_use_numa | bool and numa_available.rc != 0)
-
-- name: Install numactl package
+- name: Install NUMA tools
   ansible.builtin.apt:
     name: numactl
     state: present
   when: mongodb_use_numa | bool
 
-- name: Add systemd configuration if present
+- name: Install MongoDB systemd unit
   ansible.builtin.template:
     src: mongodb.service.j2
-    dest: "/lib/systemd/system/{{ mongodb_daemon_name }}.service"
+    dest: "/etc/systemd/system/{{ mongodb_daemon_name }}.service"
     owner: root
     group: root
-    mode: '0644'
+    mode: "0644"
   when:
-    - ansible_service_mgr == "systemd"
+    - ansible_facts['service_mgr'] == 'systemd'
     - mongodb_manage_systemd_unit | bool
   notify:
-    - reload systemd
-
-- name: Add symlink for systemd
-  ansible.builtin.file:
-    src: "/lib/systemd/system/{{ mongodb_daemon_name }}.service"
-    dest: "/etc/systemd/system/multi-user.target.wants/{{ mongodb_daemon_name }}.service"
-    state: link
-  when:
-    - ansible_service_mgr == "systemd"
-    - mongodb_manage_systemd_unit | bool
-  notify:
-    - reload systemd
-
-- name: Install PyMongo package
-  ansible.builtin.apt:
-    name: "{{ mongodb_pymongo_package }}"
-  when: not mongodb_pymongo_from_pip
-
-- name: Install PIP
-  ansible.builtin.apt:
-    pkg: "{{ mongodb_pymongo_deps }}"
-  when: mongodb_pymongo_from_pip | bool
-
-  # TODO: check if it is still needed for Debian/Ubuntu
-- name: Install setuptools (required for ansible 2.7+)
-  ansible.builtin.apt:
-    pkg: "{{ mongodb_python_setuptools }}"
-  when: mongodb_pymongo_from_pip | bool
-
-- name: Install PyMongo from PIP
-  ansible.builtin.pip:
-    name:
-      - pymongo
-    state: "{{ mongodb_pymongo_pip_version is defined | ternary('present', 'latest') }}"
-    version: "{{ mongodb_pymongo_pip_version | default(omit) }}"
-    executable: "{{ mongodb_pip_executable }}"
-    break_system_packages: true
-  when: mongodb_pymongo_from_pip | bool
+    - MongoDB reload systemd
+    - MongoDB restart

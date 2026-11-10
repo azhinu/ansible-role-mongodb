@@ -1,0 +1,53 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure MongoDB with users and monitoring
+    options:
+      mongodb_version:
+        type: str
+        description: MongoDB release series or exact package version.
+      mongodb_net_port:
+        type: int
+        description: MongoDB listening port.
+      mongodb_net_bindip:
+        type: str
+        description: Comma-separated MongoDB listen addresses.
+      mongodb_security_authorization:
+        type: str
+        choices: [enabled, disabled]
+        description: MongoDB authorization mode.
+      mongodb_user_update_password:
+        type: str
+        choices: [always, on_create]
+        description: Default password update policy.
+      mongodb_users:
+        type: list
+        elements: dict
+        description: Database users and their roles.
+        options:
+          name:
+            type: str
+            required: true
+          database:
+            type: str
+            required: true
+          password:
+            type: str
+          roles:
+            type: raw
+          state:
+            type: str
+            choices: [present, absent]
+          update_password:
+            type: str
+            choices: [always, on_create]
+      mongodb_exporter_install:
+        type: bool
+        description: Install and enable Percona MongoDB exporter.
+      mongodb_exporter_version:
+        type: str
+        description: Percona exporter release.
+      mongodb_replication_params:
+        type: list
+        elements: dict
+        description: Complete replica set membership configured on mongodb_master.

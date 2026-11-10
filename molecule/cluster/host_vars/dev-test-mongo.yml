@@ -1,0 +1,8 @@
+---
+ansible_host: mongodb-molecule-cluster-1
+mongodb_master: true
+mongodb_replication_params:
+  - host_name: mongodb-molecule-cluster-1
+    priority: 2
+  - host_name: mongodb-molecule-cluster-2
+  - host_name: mongodb-molecule-cluster-3

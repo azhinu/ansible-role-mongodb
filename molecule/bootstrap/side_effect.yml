@@ -1,0 +1,119 @@
+---
+- name: Restart MongoDB services to verify persistence
+  hosts: mongo
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load role defaults and validate input
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: validate
+        public: true
+  tasks:
+    - name: Restart MongoDB
+      ansible.builtin.systemd_service:
+        name: mongod
+        state: restarted
+
+    - name: Wait for MongoDB
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ mongodb_net_port }}"
+        timeout: 60
+
+    - name: Restart exporter
+      ansible.builtin.systemd_service:
+        name: mongodb_exporter
+        state: restarted
+
+    - name: Create a user for password policy checks
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: users
+      vars:
+        mongodb_users:
+          - name: molecule_password_policy
+            database: admin
+            password: MoleculeInitialPassword
+            roles: [clusterMonitor]
+            update_password: on_create
+
+    - name: Request a different password with on_create policy
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: users
+      vars:
+        mongodb_users:
+          - name: molecule_password_policy
+            database: admin
+            password: MoleculeRotatedPassword
+            roles: [clusterMonitor]
+            update_password: on_create
+
+    - name: Authenticate with the original password
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - >-
+            import sys; from pymongo import MongoClient;
+            c=MongoClient('127.0.0.1', int(sys.argv[1]), username='molecule_password_policy',
+            password='MoleculeInitialPassword', authSource='admin');
+            assert c.admin.command('connectionStatus')['authInfo']['authenticatedUsers']
+          - "{{ mongodb_net_port | string }}"
+      changed_when: false
+      no_log: true
+
+    - name: Rotate the password and change privileges
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: users
+      vars:
+        mongodb_users:
+          - name: molecule_password_policy
+            database: admin
+            password: MoleculeRotatedPassword
+            roles: [readAnyDatabase]
+            update_password: always
+
+    - name: Authenticate with the rotated password and verify privileges
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - >-
+            import sys; from pymongo import MongoClient;
+            c=MongoClient('127.0.0.1', int(sys.argv[1]), username='molecule_password_policy',
+            password='MoleculeRotatedPassword', authSource='admin');
+            assert c.admin.command('connectionStatus')['authInfo']['authenticatedUserRoles']
+            == [{'role':'readAnyDatabase','db':'admin'}]
+          - "{{ mongodb_net_port | string }}"
+      changed_when: false
+      no_log: true
+
+    - name: Remove the temporary user through the role
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: users
+      vars:
+        mongodb_users:
+          - name: molecule_password_policy
+            database: admin
+            state: absent
+
+    - name: Confirm that the temporary user was removed
+      community.mongodb.mongodb_info:
+        login_user: "{{ mongodb_root_admin_name }}"
+        login_password: "{{ mongodb_root_admin_password }}"
+        login_host: 127.0.0.1
+        login_port: "{{ mongodb_net_port }}"
+        strict_compatibility: false
+        filter: [users]
+      register: mongodb__policy_result
+      no_log: true
+
+    - name: Require absence of the temporary account
+      ansible.builtin.assert:
+        that:
+          - "'molecule_password_policy' not in (mongodb__policy_result.users | string)"
+      no_log: true

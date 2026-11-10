@@ -1,0 +1,7 @@
+---
+ansible_host: mongodb-molecule-bootstrap
+mongodb_net_port: 27028
+mongodb_storage_dbpath: /srv/mongodb/data
+mongodb_systemlog_path: /srv/mongodb/log/mongod.log
+mongodb_exporter_web_listen_address: 127.0.0.1:9217
+mongodb_exporter_password: Molecule "$pace\Percent%&!2026

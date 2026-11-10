@@ -1,10 +1,107 @@
 ---
-# This is an example playbook to execute Ansible tests.
-
-- name: Verify
-  hosts: all
-  gather_facts: false
+- name: Verify inventory settings and MongoDB functionality
+  hosts: mongo
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load role defaults and validate input
+      ansible.builtin.include_role:
+        name: ansible-role-mongodb
+        tasks_from: validate
+        public: true
   tasks:
-  - name: Example assertion
-    assert:
-      that: true
+    - name: Collect service state
+      ansible.builtin.service_facts:
+
+    - name: Require running and enabled MongoDB services
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[mongodb_daemon_name + '.service'].state == 'running'
+          - ansible_facts.services[mongodb_daemon_name + '.service'].status == 'enabled'
+          - not mongodb_exporter_install or ansible_facts.services['mongodb_exporter.service'].state == 'running'
+          - not mongodb_exporter_install or ansible_facts.services['mongodb_exporter.service'].status == 'enabled'
+
+    - name: Read effective MongoDB configuration
+      ansible.builtin.slurp:
+        src: /etc/mongod.conf
+      register: mongodb__config_file
+
+    - name: Compare rendered configuration against inventory
+      ansible.builtin.assert:
+        that:
+          - mongodb__config.net.bindIp | string == mongodb_net_bindip | string
+          - mongodb__config.net.port | int == mongodb_net_port | int
+          - mongodb__config.storage.dbPath == mongodb_storage_dbpath
+          - mongodb__config.security.authorization == mongodb_security_authorization
+          - mongodb__config.systemLog.path == mongodb_systemlog_path
+      vars:
+        mongodb__config: "{{ mongodb__config_file.content | b64decode | from_yaml }}"
+
+    - name: Inspect installed Python packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Require the system PyMongo package
+      ansible.builtin.assert:
+        that:
+          - "'python3-pymongo' in ansible_facts['packages']"
+
+    - name: Verify authentication roles live configuration and CRUD
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - "{{ lookup('ansible.builtin.file', 'verify_mongodb.py') }}"
+        stdin: >-
+          {{ {'host': mongodb_login_host, 'port': mongodb_login_port,
+              'admin': mongodb_root_admin_name, 'password': mongodb_root_admin_password,
+              'authorization': mongodb_security_authorization,
+              'users': mongodb_users, 'version': mongodb_version,
+              'dbpath': mongodb_storage_dbpath, 'logpath': mongodb_systemlog_path,
+              'bindip': mongodb_net_bindip, 'replset': mongodb_replication_replset,
+              'parameters': mongodb_set_parameters, 'maxconns': mongodb_net_maxconns,
+              'cache_size': mongodb_wiredtiger_cache_size | default(none),
+              'members': mongodb_replication_params} | to_json }}
+      changed_when: false
+      no_log: true
+
+    - name: Inspect MongoDB data permissions
+      ansible.builtin.stat:
+        path: "{{ mongodb_storage_dbpath }}"
+      register: mongodb__data
+
+    - name: Require MongoDB ownership
+      ansible.builtin.assert:
+        that:
+          - mongodb__data.stat.isdir
+          - mongodb__data.stat.pw_name == mongodb_user
+          - mongodb__data.stat.mode == '0750'
+
+    - name: Verify exporter
+      when: mongodb_exporter_install | bool
+      block:
+        - name: Scrape exporter metrics
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ mongodb_exporter_web_listen_address.split(':')[-1] }}/metrics"
+            return_content: true
+          register: mongodb__metrics
+          retries: 12
+          delay: 5
+          until: mongodb__metrics.status == 200 and mongodb__metrics.content is search('(?m)^mongodb_up(?:[{][^}]*[}])? 1(?:[.]0)?$')
+
+        - name: Require MongoDB collector metrics
+          ansible.builtin.assert:
+            that:
+              - "mongodb__metrics.content is search('(?m)^mongodb_up(?:[{][^}]*[}])? 1(?:[.]0)?$')"
+              - "'mongodb_ss_' in mongodb__metrics.content"
+
+        - name: Inspect exporter credentials permissions
+          ansible.builtin.stat:
+            path: /etc/mongodb_exporter.env
+          register: mongodb__exporter_env
+
+        - name: Require private exporter credentials
+          ansible.builtin.assert:
+            that:
+              - mongodb__exporter_env.stat.mode == '0600'
+              - mongodb__exporter_env.stat.pw_name == 'root'
